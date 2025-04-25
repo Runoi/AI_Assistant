@@ -1,0 +1,5 @@
+*.env
+*.session
+*.log
+chroma_data
+__pycache__
