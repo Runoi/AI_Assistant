@@ -18,6 +18,7 @@ class Config(BaseSettings):
     MARKUP_TEMPERATURE: float = 0.3  # Детерминированность разметки
     TELEGRAM_CHAT_ID: int = -10012345678  # ID основного чата
     MARKUP_MAX_TOKENS: int = 4096  # Лимит токенов для разметки
+    BOT_ID: int = None
     
     class Config:
         env_file = ".env"
