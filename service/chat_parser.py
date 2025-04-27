@@ -229,7 +229,7 @@ class TelegramParser:
             await self.initialize()
 
         documents = []
-        dialogs = [dialog async for dialog in self.client.get_dialogs()][:100]  # Лимит 100 чатов
+        dialogs = [dialog async for dialog in self.client.get_dialogs()][:10]  # Лимит 100 чатов
 
         for dialog in dialogs:
             chat_title = getattr(dialog.chat, 'title', 'private')
