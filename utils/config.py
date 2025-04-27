@@ -13,6 +13,11 @@ class Config(BaseSettings):
     CHAT_LIMIT: int = 50
     GOOGLE_SHEET_URL: str = ""
     ADMINS: List[int] = []  # Добавьте ID админов в .env если нужно
+    DAYS_OFFSET: int = 30  # Количество дней для обновления базы знаний
+    OPENAI_MARKUP_MODEL: str = "gpt-3.5-turbo-1106"  # Модель для разметки
+    MARKUP_TEMPERATURE: float = 0.3  # Детерминированность разметки
+    TELEGRAM_CHAT_ID: int = -10012345678  # ID основного чата
+    MARKUP_MAX_TOKENS: int = 4096  # Лимит токенов для разметки
     
     class Config:
         env_file = ".env"

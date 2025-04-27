@@ -1,0 +1,10 @@
+pydantic-settings
+langchain-core
+langchain-community
+langchain-openai
+chromadb
+openai
+pyrogram
+python-dotenv
+requests
+tiktoken

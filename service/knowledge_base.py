@@ -1,35 +1,34 @@
 import os
-import asyncio
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Set
-from pathlib import Path
 import logging
-from pyrogram.types import Message, User
+import asyncio
+from datetime import datetime
+from typing import List, Dict, Optional, Set
+from pathlib import Path
+
+from pyrogram.types import Message
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
+from dotenv import load_dotenv
+
 from utils.config import Config
 
-# Настройка логгирования
+load_dotenv()
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 
 class KnowledgeBase:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, client=None):
         """
-        Централизованный класс для управления базой знаний
+        Улучшенная база знаний с поддержкой LLM-разметки
         
         Args:
-            config (Config): Конфигурация приложения
+            config: Конфигурация приложения
+            client: Клиент Pyrogram (опционально)
         """
         self.config = config
-        self.bot = None  # Будет установлен при вызове update_all_sources
+        self.client = client
+        self.bot = None
         self._chat_id = None
-        self._progress_message = None
-        self._progress_message_id = None
         
         # Инициализация векторного хранилища
         self.embeddings = OpenAIEmbeddings(
@@ -50,8 +49,6 @@ class KnowledgeBase:
         # Ленивая инициализация парсеров
         self._sheets_parser = None
         self._telegram_parser = None
-        
-        logger.info("База знаний инициализирована")
 
     @property
     def sheets_parser(self):
@@ -59,78 +56,17 @@ class KnowledgeBase:
         if self._sheets_parser is None:
             from service.google_sheet_utils import GoogleSheetsParser
             self._sheets_parser = GoogleSheetsParser(self.vectorstore)
-            self._sheets_parser.knowledge_base = self
-            logger.info("Инициализирован парсер Google Sheets")
+            logger.info("Initialized Google Sheets parser")
         return self._sheets_parser
 
     @property
     def telegram_parser(self):
-        """Ленивая инициализация парсера Telegram"""
+        """Ленивая инициализация парсера Telegram с LLM"""
         if self._telegram_parser is None:
             from service.chat_parser import TelegramParser
-            self._telegram_parser = TelegramParser(self.vectorstore)
-            self._telegram_parser.knowledge_base = self
-            logger.info("Инициализирован парсер Telegram")
+            self._telegram_parser = TelegramParser(self, client=self.client)
+            logger.info("Initialized Telegram parser with LLM markup")
         return self._telegram_parser
-
-    async def _update_progress(self, text: str):
-        """
-        Обновляет сообщение о прогрессе с автоматическим созданием нового при необходимости
-        
-        Args:
-            text: Текст сообщения (автоматически обрезается до 4096 символов)
-        """
-        if not self.bot or not self._chat_id:
-            return
-
-        text = text[:4096]  # Ограничение длины для Telegram
-        
-        try:
-            # Если сообщение уже существует, пробуем его отредактировать
-            if self._progress_message:
-                try:
-                    await self._progress_message.edit_text(text)
-                    return
-                except Exception as edit_error:
-                    logger.warning(f"Не удалось отредактировать сообщение: {str(edit_error)}")
-            
-            # Создаем новое сообщение
-            self._progress_message = await self.bot.send_message(
-                chat_id=self._chat_id,
-                text=text
-            )
-            
-        except Exception as e:
-            logger.error(f"Ошибка обновления прогресса: {str(e)}", exc_info=True)
-
-    async def search(
-        self,
-        query: str,
-        k: int = 3,
-        filters: Optional[Dict] = None
-    ) -> List[Document]:
-        """
-        Поиск в векторной базе данных
-        
-        Args:
-            query: Текст запроса
-            k: Количество возвращаемых документов
-            filters: Фильтры по метаданным
-            
-        Returns:
-            Список релевантных документов
-        """
-        try:
-            results = await self.vectorstore.asimilarity_search(
-                query,
-                k=k,
-                filter=filters
-            )
-            logger.info(f"Найдено {len(results)} документов по запросу: '{query}'")
-            return results
-        except Exception as e:
-            logger.error(f"Ошибка поиска: {str(e)}", exc_info=True)
-            return []
 
     async def update_all_sources(
         self,
@@ -139,39 +75,28 @@ class KnowledgeBase:
         telegram_days_offset: int = 30
     ) -> Dict[str, int]:
         """
-        Полное обновление базы знаний с автоматическим отображением прогресса
-        
-        Args:
-            bot: Экземпляр бота для отправки сообщений
-            chat_id: ID чата для отправки сообщений прогресса
-            telegram_days_offset: Парсинг последних N дней для Telegram
-            
-        Returns:
-            Словарь с количеством добавленных документов по источникам
+        Обновление всех источников с LLM-разметкой чатов
+        Возвращает: {"google_sheets": count, "telegram": count}
         """
         self.bot = bot
         self._chat_id = chat_id
         results = {"google_sheets": 0, "telegram": 0}
         
         try:
-            # Этап 1: Начало обновления
-            await self._update_progress("🔄 Начинаю обновление базы знаний...")
+            # 1. Обновление Google Sheets
+            sheets_count = await self._update_from_sheets()
+            results["google_sheets"] = sheets_count
             
-            # Этап 2: Обновление Google Sheets
-            await self._update_progress("📊 Загружаю данные из Google Sheets...")
-            results["google_sheets"] = await self._update_from_sheets()
-            
-            # Этап 3: Обновление Telegram
-            status = f"📨 Загружаю данные из Telegram (последние {telegram_days_offset} дней)..."
-            await self._update_progress(status)
-            results["telegram"] = await self._update_from_telegram(telegram_days_offset)
+            # 2. Обновление Telegram с LLM-разметкой
+            telegram_count = await self._update_from_telegram_llm(telegram_days_offset)
+            results["telegram"] = telegram_count
             
             # Итоговый отчет
             total = sum(results.values())
             report = (
-                "✅ Обновление завершено!\n"
-                f"• Google Sheets: {results['google_sheets']}\n"
-                f"• Telegram: {results['telegram']}\n"
+                "✅ Обновление завершено\n"
+                f"• Google Sheets: {sheets_count}\n"
+                f"• Telegram (LLM): {telegram_count}\n"
                 f"• Всего: {total}"
             )
             await self._update_progress(report)
@@ -181,10 +106,8 @@ class KnowledgeBase:
         except Exception as e:
             error_msg = f"⚠️ Ошибка: {str(e)[:400]}"
             await self._update_progress(error_msg)
-            logger.error(f"Ошибка обновления: {str(e)}", exc_info=True)
+            logger.error(f"Update error: {e}", exc_info=True)
             return results
-        finally:
-            self._cleanup()
 
     async def _update_from_sheets(self) -> int:
         """Обновление данных из Google Sheets"""
@@ -194,54 +117,138 @@ class KnowledgeBase:
             )
             
             if documents:
-                ids = await self.vectorstore.aadd_documents(documents)
-                await self._update_progress(f"✅ Google Sheets: {len(ids)} документов")
-                return len(ids)
+                await self.vectorstore.aadd_documents(documents)
+                logger.info(f"Added {len(documents)} sheets documents")
+                return len(documents)
                 
-            await self._update_progress("ℹ️ Нет новых данных в Google Sheets")
+            logger.warning("No new sheets data")
             return 0
         except Exception as e:
-            error_msg = f"⚠️ Ошибка Google Sheets: {str(e)[:300]}"
-            await self._update_progress(error_msg)
-            logger.error(f"Ошибка: {str(e)}", exc_info=True)
+            logger.error(f"Sheets update error: {e}", exc_info=True)
             return 0
 
-    async def _update_from_telegram(self, days_offset: int) -> int:
-        """Обновление данных из Telegram"""
+    async def _update_from_telegram_llm(self, days_offset: int) -> int:
+        """Обновление Telegram чатов с LLM-разметкой"""
         try:
-            if not self.telegram_parser:
-                raise ValueError("Парсер Telegram не инициализирован")
-            
             documents = await self.telegram_parser.full_parse(days_offset=days_offset)
             
             if documents:
-                ids = await self.vectorstore.aadd_documents(documents)
-                msg = f"✅ Telegram: {len(ids)} сообщений (последние {days_offset} дней)"
-                await self._update_progress(msg)
-                return len(ids)
+                # Фильтрация дубликатов перед добавлением
+                existing_hashes = await self._get_existing_hashes()
+                new_docs = [
+                    doc for doc in documents 
+                    if doc.metadata["content_hash"] not in existing_hashes
+                ]
                 
-            await self._update_progress(f"ℹ️ Нет новых сообщений в Telegram за {days_offset} дней")
+                if new_docs:
+                    await self.vectorstore.aadd_documents(new_docs)
+                    logger.info(f"Added {len(new_docs)} LLM-marked telegram messages")
+                    return len(new_docs)
+                    
+            logger.info("No new telegram messages")
             return 0
-            
         except Exception as e:
-            error_msg = f"⚠️ Ошибка Telegram: {str(e)[:300]}"
-            await self._update_progress(error_msg)
-            logger.error(f"Ошибка: {str(e)}", exc_info=True)
+            logger.error(f"Telegram LLM update error: {e}", exc_info=True)
             return 0
 
-    def _cleanup(self):
-        """Очистка ресурсов и сброс состояния"""
-        self.bot = None
-        self._chat_id = None
-        self._progress_message = None
-        logger.info("Ресурсы KnowledgeBase очищены")
+    async def _get_existing_hashes(self) -> Set[str]:
+        """Получение хешей существующих документов"""
+        existing = self.vectorstore.get(include=["metadatas"])
+        if existing and "metadatas" in existing:
+            return {
+                meta["content_hash"]
+                for meta in existing["metadatas"]
+                if "content_hash" in meta
+            }
+        return set()
+
+    async def get_all_sources(self) -> List[Dict]:
+        """Получение статистики по источникам с примерами"""
+        try:
+            results = self.vectorstore.get(include=["metadatas", "documents"])
+            if not results or "metadatas" not in results:
+                return []
+                
+            # Группировка по источникам
+            sources = {}
+            for meta, content in zip(results["metadatas"], results["documents"]):
+                source = meta.get("source", "unknown")
+                if source not in sources:
+                    sources[source] = {
+                        "count": 0,
+                        "examples": [],
+                        "themes": set()
+                    }
+                sources[source]["count"] += 1
+                if len(sources[source]["examples"]) < 5:
+                    sources[source]["examples"].append(content[:200])
+                if "theme" in meta:
+                    sources[source]["themes"].add(meta["theme"])
+            
+            # Форматирование результата
+            return [
+                {
+                    "source": source,
+                    "count": data["count"],
+                    "examples": data["examples"],
+                    "themes": list(data["themes"])[:5]  # Ограничение количества тем
+                }
+                for source, data in sources.items()
+            ]
+        except Exception as e:
+            logger.error(f"Sources stats error: {e}", exc_info=True)
+            return []
+
+    async def search(
+        self,
+        query: str,
+        k: int = 3,
+        filters: Optional[Dict] = None
+    ) -> List[Document]:
+        """
+        Улучшенный поиск с учетом источников
+        filters пример: {"source": "telegram", "theme": "onboarding"}
+        """
+        try:
+            if filters and "source" in filters:
+                if filters["source"] == "telegram":
+                    filters["message_type"] = "qa_pair"  # Только размеченные Q/A
+                    
+            results = await self.vectorstore.asimilarity_search(
+                query,
+                k=k,
+                filter=filters
+            )
+            logger.info(f"Found {len(results)} docs for '{query[:50]}...'")
+            return results
+        except Exception as e:
+            logger.error(f"Search error: {e}", exc_info=True)
+            return []
+
+    async def _update_progress(self, text: str):
+        """Обновление сообщения о прогрессе"""
+        if not self.bot or not self._chat_id:
+            return
+            
+        try:
+            text = text[:4000]  # Ограничение длины
+            if hasattr(self, "_progress_message"):
+                await self._progress_message.edit_text(text)
+            else:
+                self._progress_message = await self.bot.send_message(
+                    chat_id=self._chat_id,
+                    text=text
+                )
+        except Exception as e:
+            logger.error(f"Progress update failed: {e}")
 
     async def close(self):
-        """Корректное закрытие всех ресурсов"""
+        """Корректное закрытие ресурсов"""
         try:
-            if hasattr(self, 'vectorstore'):
+            if hasattr(self, "vectorstore"):
                 del self.vectorstore
-            self._cleanup()
-            logger.info("База знаний закрыта корректно")
+            if self.client:
+                await self.client.stop()
+            logger.info("KnowledgeBase closed")
         except Exception as e:
-            logger.error(f"Ошибка при закрытии: {str(e)}")
+            logger.error(f"Close error: {e}")

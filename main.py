@@ -1,26 +1,21 @@
-import os
 import logging
-from aiogram import Bot, Dispatcher
+from pyrogram import Client
 from handlers.commands import register_handlers
 from utils.config import Config
 
-# Настройка логгирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 async def main():
-    # Загрузка конфигурации
     config = Config()
-    
-    # Инициализация бота
-    bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
-    dp = Dispatcher()
+    app = Client("terra_bot", api_id=config.API_ID, api_hash=config.API_HASH)
     
     # Регистрация обработчиков
-    register_handlers(dp, config)
+    register_handlers(app, config)
     
     # Запуск бота
-    await dp.start_polling(bot)
+    await app.start()
+    await asyncio.Event().wait()  # Бесконечное ожидание
 
 if __name__ == "__main__":
     import asyncio
