@@ -1,5 +1,7 @@
 import asyncio
+from datetime import datetime
 import logging
+import os
 from typing import Optional
 from pyrogram import filters
 from pyrogram.types import Message
@@ -9,6 +11,7 @@ from service.chatai import TerraChatAI
 from service.knowledge_base import KnowledgeBase
 from utils.config import Config
 from pyrogram.enums import ChatType
+from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +19,6 @@ async def mark_as_read(client: Client, message: Message):
     """Пометить сообщение как прочитанное"""
     try:
         await client.read_chat_history(message.chat.id)
-        # Или для конкретного сообщения (если поддерживается API):
-        # await client.view_messages(message.chat.id, message.id)
     except Exception as e:
         logger.warning(f"Не удалось пометить сообщение как прочитанное: {e}")
 
@@ -35,31 +36,108 @@ def register_handlers(app: Client, config: Config):
         await mark_as_read(client, message)
         kb = KnowledgeBase(config,client=client)
         try:
+            parts = message.text.split(maxsplit=1)
+            if len(parts) < 2:
+                await message.reply("Используйте: /update (regime)")
+                return
+            regime = parts[1].strip().lower()
+            if regime not in ["all", "sheets", "telegram"]:
+                await message.reply("Недопустимый режим. Используйте: all, sheets, telegram")
+                return
             await kb.update_all_sources(
                 bot=client,
                 chat_id=message.chat.id,
                 telegram_days_offset=config.DAYS_OFFSET,
+                regime=regime
             )
         except Exception as e:
             await message.reply(f"⚠️ Ошибка: {str(e)[:400]}")
         finally:
+            await asyncio.sleep(3)
             await kb.close()
 
-    @app.on_message(filters.command("update_llm") & filters.user(config.ADMINS))
-    async def update_with_llm(client: Client, message: Message):
-        """Обновление с использованием LLM-разметки"""
+    @app.on_message(filters.command("export_kb") & filters.user(config.ADMINS))
+    async def export_knowledge_base(client: Client, message: Message):
+        """Экспортирует базу знаний в JSON файл и отправляет его администратору."""
         try:
-            kb = KnowledgeBase(config, client=client)
-            count = await kb.update_from_telegram(days_offset=30)
+            await message.reply("🔄 Начинаю экспорт базы знаний...")
             
-            await message.reply(
-                f"🔄 Обновлено с LLM-разметкой\n"
-                f"• Добавлено документов: {count}\n"
-                f"• Источники: Telegram"
+            kb = KnowledgeBase(config, client=client)
+            file_path = await kb.export_to_json()
+            
+            if not file_path or not os.path.exists(file_path):
+                await message.reply("❌ Не удалось создать файл экспорта")
+                return
+
+            # Отправляем файл
+            await client.send_document(
+                chat_id=message.chat.id,
+                document=file_path,
+                caption=f"📚 Экспорт базы знаний ({datetime.now().strftime('%Y-%m-%d')})"
             )
+            
+            # Удаляем временный файл
+            os.unlink(file_path)
+            
         except Exception as e:
-            logger.error(f"LLM update failed: {e}")
-            await message.reply(f"⚠️ Ошибка: {str(e)[:200]}")
+            logger.error(f"Export KB error: {e}")
+            await message.reply(f"⚠️ Ошибка экспорта: {str(e)[:200]}")        
+
+    @app.on_message(filters.command("remove_duplicates") & filters.user(config.ADMINS))
+    async def handle_remove_duplicates(client: Client, message: Message):
+        """Удаляет дубликаты из базы знаний."""
+        try:
+            await message.reply("🔍 Поиск дубликатов... (это может занять время)")
+            
+            kb = KnowledgeBase(config, client=client)
+            result = await kb.remove_duplicates()
+            
+            if "error" in result:
+                await message.reply(f"❌ Ошибка: {result['error']}")
+                return
+            
+            report = (
+                "✅ Дубликаты удалены:\n"
+                f"• Всего записей: {result['total']}\n"
+                f"• Удалено дубликатов: {result['removed']}\n"
+                f"• Осталось уникальных: {result['remaining']}"
+            )
+            await message.reply(report)
+            
+        except Exception as e:
+            logger.error(f"Ошибка в /remove_duplicates: {e}")
+            await message.reply("⚠️ Ошибка. Подробности в логах.")
+
+    @app.on_message(filters.command("help"))
+    async def help(client: Client, message: Message):
+        help_text = """
+        📌 **Доступные команды**:
+        - `/start` - Начало работы/тестовое сообщение.
+        - `/help` - Эта справка.
+        Для администраторов:
+        - `/update (regime)` - Обновить базу знаний из: all - всех источников, sheets - таблиц, telegram - чатов.
+        - `/kb_stats` - Статистика базы знаний.
+        - `/add_qa` - Добавить Вопрос:Ответ вручную.
+        - `/export_kb` - экспорт в JSON
+        - `/remove_duplicates` — удалить дубликаты
+        """
+        await message.reply(help_text)
+
+    @app.on_message(filters.command("add_qa") & filters.user(config.ADMINS))
+    async def add_qa(client: Client, message: Message):
+        # Пример: /add_qa Вопрос? Ответ!
+        parts = message.text.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.reply("Используйте: /add_qa Вопрос? Ответ!")
+            return
+        
+        q, a = parts[1].split("?", maxsplit=1)
+        doc = Document(
+            page_content=q.strip(),
+            metadata={"answer": a.strip(), "source": "manual"}
+        )
+        await kb.vectorstore.aadd_documents([doc])
+        await message.reply("✅ Q/A добавлено в базу знаний!")
 
     @app.on_message(filters.command("kb_stats") & filters.user(config.ADMINS))
     async def kb_stats_handler(client: Client, message: Message):
@@ -123,7 +201,7 @@ def register_handlers(app: Client, config: Config):
     async def handle_question(client: Client, message: Message):
         """Обработчик вопросов с полной защитой от пустых сообщений"""
         try:
-            # 1. Проверка чата и пользователя
+            # 1. Проверка чата и пользователя. Временная заглушка для тестов
             if message.chat.id != -1001945870336:
                 return
 

@@ -72,7 +72,8 @@ class KnowledgeBase:
         self,
         bot,
         chat_id: int,
-        telegram_days_offset: int = 30
+        telegram_days_offset: int = 30,
+        regime: str = "all"
     ) -> Dict[str, int]:
         """
         Обновление всех источников с LLM-разметкой чатов
@@ -83,25 +84,47 @@ class KnowledgeBase:
         results = {"google_sheets": 0, "telegram": 0}
         
         try:
-            # 1. Обновление Google Sheets
-            sheets_count = await self._update_from_sheets()
-            results["google_sheets"] = sheets_count
-            
-            # 2. Обновление Telegram с LLM-разметкой
-            telegram_count = await self._update_from_telegram_llm(telegram_days_offset)
-            results["telegram"] = telegram_count
-            
-            # Итоговый отчет
-            total = sum(results.values())
-            report = (
+            if regime == "sheets":
+                # 1. Обновление Google Sheets
+                sheets_count = await self._update_from_sheets()
+                results["google_sheets"] = sheets_count
+                total = sum(results.values())
+                report = (
+                "✅ Обновление завершено\n"
+                f"• Google Sheets: {sheets_count}\n"
+                f"• Всего: {total}"
+            )
+                await self._update_progress(report)
+                return results
+            elif regime == "telegram":
+                # 2. Обновление Telegram с LLM-разметкой
+                telegram_count = await self._update_from_telegram_llm(telegram_days_offset)
+                results["telegram"] = telegram_count
+                total = sum(results.values())
+                report = (
+                "✅ Обновление завершено\n"
+                
+                f"• Telegram (LLM): {telegram_count}\n"
+                f"• Всего: {total}"
+            )
+                await self._update_progress(report)
+                return results
+            elif regime == "all":
+                sheets_count = await self._update_from_sheets()
+                telegram_count = await self._update_from_telegram_llm(telegram_days_offset)
+                results["google_sheets"] = sheets_count
+                total = sum(results.values())
+                report = (
                 "✅ Обновление завершено\n"
                 f"• Google Sheets: {sheets_count}\n"
                 f"• Telegram (LLM): {telegram_count}\n"
                 f"• Всего: {total}"
             )
-            await self._update_progress(report)
+                await self._update_progress(report)
+                return results
             
-            return results
+            
+            
             
         except Exception as e:
             error_msg = f"⚠️ Ошибка: {str(e)[:400]}"
@@ -161,6 +184,81 @@ class KnowledgeBase:
                 if "content_hash" in meta
             }
         return set()
+    async def export_to_json(self) -> Optional[str]:
+        """Экспортирует всю базу знаний в JSON файл и возвращает путь к нему."""
+        try:
+            # Получаем все данные из векторного хранилища
+            data = self.vectorstore.get(include=["metadatas", "documents"])
+            if not data or "documents" not in data:
+                return None
+
+            # Формируем структуру для экспорта
+            export_data = []
+            for doc, meta in zip(data["documents"], data["metadatas"]):
+                export_data.append({
+                    "question": doc,
+                    "answer": meta.get("answer", ""),
+                    "source": meta.get("source", "unknown"),
+                    "theme": meta.get("theme", ""),
+                    "content_hash": meta.get("content_hash", ""),
+                    "date": meta.get("date", "")
+                })
+
+            # Сохраняем во временный файл с указанием кодировки UTF-8
+            import tempfile
+            import json
+            import os
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+                file_path = f.name
+
+            return file_path
+
+        except Exception as e:
+            logger.error(f"Export error: {e}")
+            return None
+        
+
+    async def remove_duplicates(self) -> dict:
+        """
+        Удаляет дубликаты из базы знаний.
+        Возвращает: {"total": int, "removed": int, "remaining": int}
+        """
+        try:
+            # Получаем все документы (без явного запроса ids)
+            data = self.vectorstore.get(include=["metadatas", "documents"])
+            if not data or not data.get("documents"):
+                return {"total": 0, "removed": 0, "remaining": 0}
+
+            # Получаем ids отдельным запросом
+            ids = self.vectorstore.get()["ids"]
+            
+            # Собираем уникальные записи
+            unique_entries = {}
+            duplicates_ids = []
+
+            for idx, (meta, doc_text) in enumerate(zip(data["metadatas"], data["documents"])):
+                content_hash = meta.get("content_hash", doc_text)  # Используем текст как fallback
+                
+                if content_hash in unique_entries:
+                    duplicates_ids.append(ids[idx])
+                else:
+                    unique_entries[content_hash] = ids[idx]
+
+            # Удаляем дубликаты
+            if duplicates_ids:
+                await self.vectorstore.adelete(ids=duplicates_ids)
+            
+            return {
+                "total": len(ids),
+                "removed": len(duplicates_ids),
+                "remaining": len(ids) - len(duplicates_ids)
+            }
+
+        except Exception as e:
+            logger.error(f"Ошибка удаления дубликатов: {e}", exc_info=True)
+            return {"error": str(e)}
 
     async def get_all_sources(self) -> List[Dict]:
         """Получение статистики по источникам с примерами"""
@@ -247,8 +345,7 @@ class KnowledgeBase:
         try:
             if hasattr(self, "vectorstore"):
                 del self.vectorstore
-            if self.client:
-                await self.client.stop()
+            
             logger.info("KnowledgeBase closed")
         except Exception as e:
             logger.error(f"Close error: {e}")
