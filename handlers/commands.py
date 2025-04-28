@@ -3,6 +3,7 @@ from datetime import datetime
 import logging
 import os
 from typing import Optional
+from dotenv import load_dotenv
 from pyrogram import filters
 from pyrogram.types import Message
 from pyrogram.client import Client
@@ -120,6 +121,8 @@ def register_handlers(app: Client, config: Config):
         - `/add_qa` - Добавить Вопрос:Ответ вручную.
         - `/export_kb` - экспорт в JSON
         - `/remove_duplicates` — удалить дубликаты
+         - `/get_prompt` - показать текущий промпт
+        - `/set_prompt` - установить новый промпт (ответьте на сообщение с промптом)
         """
         await message.reply(help_text)
 
@@ -193,17 +196,53 @@ def register_handlers(app: Client, config: Config):
             logger.error(f"Ошибка в kb_stats: {e}", exc_info=True)
             await message.reply("⚠️ Ошибка получения статистики. Подробности в логах.")
 
+    @app.on_message(filters.command("get_prompt") & filters.user(config.ADMINS))
+    async def get_prompt(client: Client, message: Message):
+        """Показывает текущий промпт"""
+        try:
+            prompt = chat_ai.get_current_prompt()
+            # Разбиваем на части если слишком длинный
+            if len(prompt) > 4000:
+                parts = [prompt[i:i+4000] for i in range(0, len(prompt), 4000)]
+                for part in parts:
+                    await message.reply(f"<code>{part}</code>", parse_mode=enums.ParseMode.HTML)
+                    await asyncio.sleep(1)
+            else:
+                await message.reply(f"<code>{prompt}</code>", parse_mode=enums.ParseMode.HTML)
+        except Exception as e:
+            await message.reply(f"Ошибка: {str(e)}")
+
+    @app.on_message(filters.command("set_prompt") & filters.user(config.ADMINS))
+    async def set_prompt(client: Client, message: Message):
+        """Устанавливает новый промпт"""
+        try:
+            message_text = message.text.split(maxsplit=1)
+                
+            new_prompt = message_text[1]
+            if chat_ai.update_prompt(new_prompt):
+                await message.reply("✅ Промпт успешно обновлен!")
+            else:
+                await message.reply("❌ Не удалось обновить промпт")
+        except Exception as e:
+            await message.reply(f"Ошибка: {str(e)}")
+
+
     @app.on_message(
         filters.text 
         & ~filters.command("start") 
         & ~filters.command("update")
+        & ~filters.command("get_prompt")
+        & ~filters.command("set_prompt")
     )
     async def handle_question(client: Client, message: Message):
         """Обработчик вопросов с полной защитой от пустых сообщений"""
         try:
-            # 1. Проверка чата и пользователя. Временная заглушка для тестов
-            if message.chat.id != -1001945870336:
-                return
+            load_dotenv('.env')
+            regime = os.getenv('REGIME', 'test')
+            if regime == 'test':
+                if message.chat.id != -1001945870336:
+                    return
+
 
             if not message.from_user or not message.text:
                 await _safe_reply(message, "Пожалуйста, отправьте текстовый вопрос")
