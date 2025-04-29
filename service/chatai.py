@@ -16,7 +16,7 @@ class TerraChatAI:
         self.config = config
         self.client = client
         self.llm = ChatOpenAI(
-            model="gpt-3.5-turbo",
+            model= config.MODEL,
             temperature=0.3,
             api_key=config.OPENAI_API_KEY,
             max_retries=3,
@@ -32,7 +32,7 @@ class TerraChatAI:
         
         # База общих вопросов
         self.common_answers = {
-            "кто ты": "Я - AI-ассистент TERRA. Помогаю с вопросами о наставниках и заявках.",
+            
             "что ты умеешь": "Могу отвечать на вопросы, искать информацию в базе знаний TERRA.",
             "помощь": "Задайте вопрос о наставниках, заявках или другой информации TERRA.",
         }

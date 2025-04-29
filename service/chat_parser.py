@@ -20,7 +20,7 @@ from utils.config import Config
 load_dotenv()
 logger = logging.getLogger(__name__)
 load_dotenv('.env')
-
+model = os.getenv('MODEL')
 chats_to_pars = int(os.getenv("CHATS_TO_PARS", ""))
 class TelegramParser:
     def __init__(self, knowledge_base, client: Client = None):
@@ -46,7 +46,7 @@ class TelegramParser:
         )
         
         # Настройки токенизации и чанкинга
-        self.encoder = encoding_for_model("gpt-3.5-turbo")
+        self.encoder = encoding_for_model(model)
         self.MAX_TOKENS = 12000  # С запасом для промпта и ответа
         self.MESSAGE_CHUNK_SIZE = 30  # Оптимальный размер чанка
         self.MESSAGE_LENGTH_LIMIT = 500  # Лимит символов на сообщение
@@ -149,7 +149,7 @@ class TelegramParser:
                 user_content = "Разметь следующие сообщения в JSON формате:\n" + "\n".join(chunk_texts)
                 
                 response = await self.openai_client.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                    model=model,
                     messages=[
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": user_content}

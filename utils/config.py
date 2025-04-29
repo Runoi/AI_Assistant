@@ -3,9 +3,8 @@ from typing import List, Optional
 
 class Config(BaseSettings):
     # Обязательные поля (переименованы в соответствии с .env)
-    TELEGRAM_BOT_TOKEN: str  # было TELEGRAM_TOKEN
     OPENAI_API_KEY: str      # было OPENAI_KEY
-    
+    MODEL: str
     # Опциональные поля
     API_ID: Optional[str] = None
     API_HASH: Optional[str] = None
