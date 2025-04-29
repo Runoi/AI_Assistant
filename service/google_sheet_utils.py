@@ -23,6 +23,7 @@ class ChromaVectorStore:
         self.embeddings = OpenAIEmbeddings(
             model="text-embedding-3-small",
             openai_api_key=OPENAI_API_KEY,
+            openai_proxy=os.getenv("OPENAI_PROXY"),
         )
         self.vectorstore = Chroma(
             persist_directory=persist_directory,

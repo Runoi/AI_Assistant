@@ -34,7 +34,8 @@ class KnowledgeBase:
         self.embeddings = OpenAIEmbeddings(
             model="text-embedding-3-small",
             api_key=config.OPENAI_API_KEY,
-            chunk_size=500
+            chunk_size=500,
+            openai_proxy=config.OPENAI_PROXY,
         )
         
         chroma_dir = Path("chroma_data").absolute()

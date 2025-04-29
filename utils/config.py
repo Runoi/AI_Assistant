@@ -19,6 +19,7 @@ class Config(BaseSettings):
     TELEGRAM_CHAT_ID: int = -10012345678  # ID основного чата
     MARKUP_MAX_TOKENS: int = 4096  # Лимит токенов для разметки
     BOT_ID: int = None
+    OPENAI_PROXY: str = None  # Прокси для OpenAI, если требуется
     
     class Config:
         env_file = ".env"

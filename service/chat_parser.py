@@ -41,7 +41,8 @@ class TelegramParser:
         self.openai_client = AsyncOpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
             timeout=30.0,
-            max_retries=3
+            max_retries=3,
+            openai_proxty=os.getenv("OPENAI_PROXY"),
         )
         
         # Настройки токенизации и чанкинга
