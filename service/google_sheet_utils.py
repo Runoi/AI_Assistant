@@ -147,5 +147,5 @@ class GoogleSheetsParser:
                     
             return None
         except Exception as e:
-            logger.error(f"Ошибка парсинга промпта: {e}")
+            
             return None

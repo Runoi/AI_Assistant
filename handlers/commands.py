@@ -62,6 +62,7 @@ def register_handlers(app: Client, config: Config):
                 try:
                     await message.reply("🔄 Проверяю обновления промпта в таблице...")
                     prompt = await kb.get_prompt_from_sheets()
+                    logger.info(prompt)
                     if prompt and prompt.strip():
                         if chat_ai.update_prompt(prompt.strip()):
                             await message.reply("✅ Промпт успешно обновлен из таблицы!")
@@ -221,8 +222,9 @@ def register_handlers(app: Client, config: Config):
     async def get_prompt(client: Client, message: Message):
         """Показывает текущий промпт"""
         try:
-            prompt = chat_ai.get_current_prompt()
-            # Разбиваем на части если слишком длинный
+            prompt = await kb.get_prompt_from_sheets()
+            if prompt:
+                chat_ai.update_prompt(prompt.strip())
             if len(prompt) > 4000:
                 parts = [prompt[i:i+4000] for i in range(0, len(prompt), 4000)]
                 for part in parts:
