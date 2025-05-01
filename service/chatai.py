@@ -1,5 +1,6 @@
 import asyncio
 from typing import Dict, List, Optional, Union
+from collections import Counter
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
@@ -97,33 +98,59 @@ class TerraChatAI:
     def setup_rag_chain(self):
         """Настройка цепочки RAG с текущим промптом."""
         prompt = ChatPromptTemplate.from_template(self.get_current_prompt())
-        self.rag_chain = (
-            {
-                "context": self._retrieve_context,
-                "history": self._get_chat_history,
-                "question": RunnablePassthrough()
+        async def prepare_context(input_data: Dict) -> Dict:
+            """Подготовка контекста с учетом релевантности"""
+            question = input_data["question"]
+            user_id = input_data.get("user_id")
+            
+            # Получаем результаты с оценкой релевантности
+            results = await self.kb.search(question, k=5)
+            
+            # Фильтруем и форматируем контекст
+            context_parts = []
+            for doc, score in results:
+                if score > 0.5:  # Порог релевантности
+                    context_parts.append(
+                        f"[Релевантность: {score:.2f}]\n"
+                        f"В: {doc.page_content}\n"
+                        f"О: {doc.metadata.get('answer', '...')}\n"
+                    )
+            
+            # Получаем историю чата
+            history = await self._get_chat_history({"user_id": user_id}) if user_id else ""
+            
+            return {
+                "question": question,
+                "context": "\n".join(context_parts) if context_parts else "Нет релевантной информации",
+                "history": history
             }
+    
+        self.rag_chain = (
+            RunnablePassthrough()
+            | prepare_context
             | prompt
             | self.llm
             | StrOutputParser()
         )
-
     async def _retrieve_context(self, input_data: Dict) -> str:
-        """Поиск контекста с защитой от неправильных типов"""
-        try:
-            question = input_data.get("question", "")
-            if not isinstance(question, str):
-                logger.error(f"Некорректный тип вопроса: {type(question)}")
-                return ""
-                
-            docs = await self.kb.search(question, k=5)
-            return "\n".join(
-                f"Вопрос: {doc.page_content}\nОтвет: {doc.metadata.get('answer', '...')}"
-                for doc in docs
-            )
-        except Exception as e:
-            logger.error(f"Ошибка поиска контекста: {e}")
+        question = input_data["question"]
+        docs = await self.kb.search(question, k=5)
+        
+        if not docs:
             return ""
+        
+        context = []
+        for doc in docs:
+            # Добавляем ответ ТОЛЬКО если он есть в metadata
+            answer = doc.metadata.get("answer")
+            if answer:
+                context.append(
+                    f"Вопрос: {doc.page_content}\nОтвет: {answer}\n"
+                    f"Источник: {doc.metadata.get('source', 'unknown')}\n"
+                    f"Score: {doc.metadata.get('score', 0):.2f}"
+                )
+        
+        return "\n".join(context) if context else ""
 
     async def _get_chat_history(self, input_data: Dict) -> str:
         """Получение истории чата"""
@@ -174,21 +201,72 @@ class TerraChatAI:
         return None
 
     async def _generate_rag_answer(self, user_id: int, question: str) -> Optional[str]:
-        """Генерация ответа через RAG"""
+        """Улучшенная генерация ответа с интегрированным перефразированием"""
         try:
-            result = await self.rag_chain.ainvoke({
-                "question": question,
-                "user_id": user_id
-            })
-            
-            if not self._is_valid_answer(result):
+            # 1. Поиск в базе знаний
+            results = await self.kb.search(question, k=3)
+            if not results:
                 return None
+
+            best_doc, best_score = results[0]
+            raw_answer = best_doc.metadata.get("answer", "").strip()
+
+            # 2. Проверка валидности базового ответа
+            if not self._is_valid_answer(raw_answer):
+                # Полноценная RAG-цепочка если ответ невалидный
+                context = f"В: {best_doc.page_content}\nО: {raw_answer}"
+                history = await self._get_chat_history({"user_id": user_id})
                 
-            self._update_history(user_id, question, result)
-            return result
+                rag_prompt = ChatPromptTemplate.from_template(self.get_current_prompt())
+                formatted_prompt = await rag_prompt.ainvoke({
+                    "question": question,
+                    "context": context,
+                    "history": history
+                })
+                result_msg = await self.llm.ainvoke(formatted_prompt)
+                return result_msg.content if self._is_valid_answer(result_msg.content) else None
+
+            # 3. Улучшение ответа через ИИ (встроено в основной поток)
+            if best_score > 0.75:  # Порог для улучшения
+                try:
+                    # Минимальное улучшение для точных ответов
+                    if best_score > 0.9:
+                        enhance_prompt = f"""
+                        Перефразируй ответ более естественно, сохраняя точность:
+                        Вопрос: {question}
+                        Текущий ответ: {raw_answer}
+                        Улучшенный вариант (максимум 1 предложение):
+                        """
+                    else:
+                        # Полное улучшение с контекстом
+                        enhance_prompt = f"""
+                        Улучши ответ используя дополнительный контекст:
+                        Контекст: {best_doc.page_content[:200]}...
+                        Вопрос: {question}
+                        Текущий ответ: {raw_answer}
+                        Сделай ответ:
+                        1. Более развернутым (2-3 предложения)
+                        2. Сохрани все ключевые факты
+                        3. Добавь полезные детали если уместно
+                        Улучшенный ответ:
+                        """
+                    
+                    enhanced_msg = await self.llm.ainvoke(enhance_prompt)
+                    final_answer = enhanced_msg.content if self._is_valid_answer(enhanced_msg.content) else raw_answer
+                except Exception as e:
+                    logger.warning(f"Answer enhancement failed, using original: {e}")
+                    final_answer = raw_answer
+            else:
+                final_answer = raw_answer
+
+            # 4. Обновление истории и возврат
+            self._update_history(user_id, question, final_answer)
+            return final_answer
+
         except Exception as e:
-            logger.error(f"Ошибка RAG цепи: {e}")
+            logger.error(f"Full RAG generation error: {e}")
             return None
+
 
     def _update_history(self, user_id: int, question: str, answer: str):
         """Обновление истории сообщений"""
@@ -205,13 +283,15 @@ class TerraChatAI:
             self.message_history[user_id] = self.message_history[user_id][-10:]
 
     def _is_valid_answer(self, text: str) -> bool:
-        """Проверка валидности ответа"""
-        if not text or len(text.strip()) < 3:
+        if not text or len(text.strip()) < 5:  # Увеличить минимальную длину
             return False
-            
         text = text.lower()
-        invalid = {"не знаю", "нет информации", "не нашел"}
-        return not any(phrase in text for phrase in invalid)
+        invalid_phrases = {
+            "не знаю", "нет информации", "не нашел", 
+            "нет ответа", "не могу ответить", "у меня нет ответа"
+        }
+        # Запретить ответы, содержащие invalid_phrases, даже если есть "нет"
+        return not any(phrase in text for phrase in invalid_phrases)
 
     async def cleanup_inactive_sessions(self, hours=24):
         """Очистка неактивных сессий"""

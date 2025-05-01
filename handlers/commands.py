@@ -235,6 +235,29 @@ def register_handlers(app: Client, config: Config):
         except Exception as e:
             await message.reply(f"Ошибка: {str(e)}")
 
+   
+    @app.on_message(filters.command("debug_search") & filters.user(config.ADMINS))
+    async def debug_search(client: Client, message: Message):
+        try:
+            query = message.text.split(maxsplit=1)[1]
+            # Используем новый параметр with_scores вместо include_scores
+            results = await kb.search(query, k=5)
+            
+            if not results:
+                await message.reply("🔍 Ничего не найдено")
+                return
+                
+            response = ["🔍 Результаты поиска в векторной БД:"]
+            for doc, score in results:
+                source = doc.metadata.get("source", "unknown")
+                response.append(
+                    f"• [{source}] {doc.page_content[:80]}... (score: {score:.2f})"
+                )
+            
+            await message.reply("\n".join(response)[:4000])
+        except Exception as e:
+            await message.reply(f"⚠️ Ошибка: {str(e)}")
+
     @app.on_message(filters.command("set_prompt") & filters.user(config.ADMINS))
     async def set_prompt(client: Client, message: Message):
         """Устанавливает новый промпт"""

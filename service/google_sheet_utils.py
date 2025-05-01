@@ -47,16 +47,33 @@ class ChromaVectorStore:
                 if "content_hash" in meta
             }
         return set()
+    
+    async def get_existing_questions(self) -> Set[str]:
+        """Возвращает нормализованные тексты существующих вопросов"""
+        existing = self.vectorstore._collection.get(include=["documents"])
+        if existing and "documents" in existing:
+            return {
+                self._normalize_question(doc)
+                for doc in existing["documents"]
+            }
+        return set()
+    def _normalize_question(self, text: str) -> str:
+        """Нормализация вопроса для сравнения"""
+        return text.strip().lower().replace("?", "").replace("!", "").replace(".", "")
+
 
 class GoogleSheetsParser:
     def __init__(self, vectorstore: ChromaVectorStore):
         self.vectorstore = vectorstore
         self.processed_hashes: Set[str] = set()
+        self.existing_questions: Set[str] = set()  # Добавляем инициализацию
 
+    
     async def initialize(self):
-        """Загружает существующие хеши при инициализации"""
+        """Загружает существующие вопросы при инициализации"""
         self.processed_hashes = await self.vectorstore.get_existing_hashes()
-        print(f"🔍 Загружено {len(self.processed_hashes)} существующих хешей")
+        self.existing_questions = await self.vectorstore.get_existing_questions()  # Новая функция
+        print(f"🔍 Загружено {len(self.existing_questions)} существующих вопросов")
 
     @staticmethod
     def _get_export_url(sheet_url: str) -> str:
@@ -84,49 +101,85 @@ class GoogleSheetsParser:
             response.encoding = 'utf-8'
             response.raise_for_status()
             
-            return self._process_csv(response.text)
+            all_documents = self._process_csv(response.text)
+            
+            # Фильтруем по нормализованному тексту вопроса
+            new_documents = []
+            duplicate_count = 0
+            
+            for doc in all_documents:
+                norm_question = self._normalize_question(doc.page_content)
+                if norm_question in self.existing_questions:
+                    duplicate_count += 1
+                    continue
+                    
+                new_documents.append(doc)
+                self.existing_questions.add(norm_question)
+            
+            print(f"📊 Найдено {len(all_documents)} записей, из них новых: {len(new_documents)}, дубликатов: {duplicate_count}")
+            return new_documents
         except Exception as e:
             print(f"⚠️ Ошибка: {e}")
             return []
 
     def _process_csv(self, csv_content: str) -> List[Document]:
-        """Обрабатывает CSV контент с фильтрацией дубликатов"""
+        seen = set()
         documents = []
-        current_answer = ""
+        last_valid_answer = None  # Храним последний непустой ответ
         
         reader = csv.reader(StringIO(csv_content))
-        next(reader)  # Пропускаем заголовок
+        headers = [h.strip().lower() for h in next(reader)]
+        
+        try:
+            q_col = headers.index("вопрос")
+            a_col = headers.index("ответ")
+        except ValueError:
+            return []
         
         for row in reader:
-            if len(row) < 2:
+            if len(row) <= max(q_col, a_col):
                 continue
                 
-            question = row[0].strip()
-            answer = row[1].strip() or current_answer
+            question = self._normalize_question(row[q_col])
+            answer = self._normalize_answer(row[a_col])
             
-            if not question:
+            # Если ответ пустой, используем последний валидный
+            if not answer and last_valid_answer:
+                answer = last_valid_answer
+            elif answer:  # Запоминаем новый валидный ответ
+                last_valid_answer = answer
+                
+            if not question or not answer:
                 continue
                 
-            # Генерируем уникальный хеш
-            content = f"{question}{answer}"
-            content_hash = self._generate_hash(content)
-            
-            if content_hash not in self.processed_hashes:
-                documents.append(Document(
-                    page_content=question,
-                    metadata={
-                        "answer": answer,
-                        "source": "google_sheets",
-                        "content_hash": content_hash
-                    }
-                ))
-                self.processed_hashes.add(content_hash)
-            
-            if row[1].strip():
-                current_answer = row[1].strip()
+            content_key = hashlib.md5(f"{question.lower()}{answer.lower()}".encode()).hexdigest()
+            if content_key in seen:
+                continue
+                
+            seen.add(content_key)
+            documents.append(Document(
+                page_content=question,
+                metadata={
+                    "answer": answer,
+                    "source": "google_sheets",
+                    "content_hash": content_key
+                }
+            ))
         
         return documents
-    
+
+    def _normalize_question(self, text: str) -> str:
+        """Приведение вопроса к стандартному виду"""
+        if not isinstance(text, str):
+            return ""
+        return text.strip().capitalize()
+
+    def _normalize_answer(self, text: str) -> str:
+        """Приведение ответа к стандартному виду"""
+        if not isinstance(text, str):
+            return ""
+        return text.strip()
+        
     async def parse_prompt_from_sheet(self, sheet_url: str) -> Optional[str]:
         """Парсит промпт из листа 'Prompt' в Google Sheets"""
         try:
