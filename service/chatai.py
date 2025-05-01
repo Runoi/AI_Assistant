@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, List, Optional, Union
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -29,13 +30,33 @@ class TerraChatAI:
         self.user_sessions: Dict[int, datetime] = {}
         self.current_prompt = self._get_default_prompt()
         self.setup_rag_chain()  # Создаем цепочку с дефолтным промптом
-        
+        self._init_task = asyncio.create_task(self._async_init())
         # База общих вопросов
         self.common_answers = {
             
             "что ты умеешь": "Могу отвечать на вопросы, искать информацию в базе знаний TERRA.",
             "помощь": "Задайте вопрос о наставниках, заявках или другой информации TERRA.",
         }
+
+    async def _async_init(self):
+        """Асинхронная часть инициализации"""
+        try:
+            await self._load_prompt_from_sheets()
+        except Exception as e:
+            logger.error(f"Error in async init: {e}")
+
+    async def _load_prompt_from_sheets(self):
+        """Загружает и устанавливает промпт из Google Sheets"""
+        try:
+            prompt = await self.kb.get_prompt_from_sheets()
+            if prompt and prompt.strip():
+                # Обновляем текущий промпт
+                self.current_prompt = prompt.strip()
+                # Пересоздаём цепочку RAG с новым промптом
+                self.setup_rag_chain()
+                logger.info("Prompt updated from Google Sheets")
+        except Exception as e:
+            logger.error(f"Failed to load prompt from sheets: {e}")
 
     def _get_default_prompt(self) -> str:
         """Возвращает промпт по умолчанию."""

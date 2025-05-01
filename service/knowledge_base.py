@@ -174,6 +174,16 @@ class KnowledgeBase:
         except Exception as e:
             logger.error(f"Telegram LLM update error: {e}", exc_info=True)
             return 0
+    
+    async def get_prompt_from_sheets(self) -> Optional[str]:
+        """Получает промпт из Google Sheets"""
+        try:
+            return await self.sheets_parser.parse_prompt_from_sheet(
+                self.config.GOOGLE_SHEET_URL
+            )
+        except Exception as e:
+            logger.error(f"Error getting prompt from sheets: {e}")
+            return None
 
     async def _get_existing_hashes(self) -> Set[str]:
         """Получение хешей существующих документов"""

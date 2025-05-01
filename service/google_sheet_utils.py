@@ -126,3 +126,34 @@ class GoogleSheetsParser:
                 current_answer = row[1].strip()
         
         return documents
+    
+    async def parse_prompt_from_sheet(self, sheet_url: str) -> Optional[str]:
+        """Парсит промпт из Google Таблицы (столбец 'Промпт')"""
+        try:
+            export_url = self._get_export_url(sheet_url)
+            response = requests.get(export_url, timeout=30)
+            response.encoding = 'utf-8'
+            response.raise_for_status()
+            
+            reader = csv.reader(StringIO(response.text))
+            headers = next(reader)  # Читаем заголовки
+            
+            # Ищем столбец с промптом (регистронезависимо)
+            prompt_col = None
+            for idx, header in enumerate(headers):
+                if header.strip().lower() == 'промпт':
+                    prompt_col = idx
+                    break
+                    
+            if prompt_col is None:
+                return None
+                
+            # Ищем первую непустую строку в столбце промпта
+            for row in reader:
+                if len(row) > prompt_col and row[prompt_col].strip():
+                    return row[prompt_col].strip()
+                    
+            return None
+        except Exception as e:
+            print(f"⚠️ Ошибка при парсинге промпта: {e}")
+            return None
