@@ -201,84 +201,70 @@ class TerraChatAI:
         return None
 
     async def _generate_rag_answer(self, user_id: int, question: str) -> Optional[str]:
-        """Улучшенная генерация ответа с интегрированным перефразированием"""
+        """Генерация ответа через RAG, с приоритетом прямых совпадений"""
         try:
-            # 1. Поиск в базе знаний
-            results = await self.kb.search(question, k=3)
+            results = await self.kb.search(question, k=5)
             if not results:
+                logger.warning(f"No results found for question: {question}")
                 return None
 
-            best_doc, best_score = results[0]
-            raw_answer = best_doc.metadata.get("answer", "").strip()
+            filtered_results = [(doc, score) for doc, score in results if score > 0.5]
+            if not filtered_results:
+                logger.warning(f"No relevant results (all scores <= 0.7) for: {question}")
+                return None
 
-            # 2. Проверка валидности базового ответа
-            if not self._is_valid_answer(raw_answer):
-                # Полноценная RAG-цепочка если ответ невалидный
-                context = f"В: {best_doc.page_content}\nО: {raw_answer}"
-                history = await self._get_chat_history({"user_id": user_id})
-                
-                rag_prompt = ChatPromptTemplate.from_template(self.get_current_prompt())
-                formatted_prompt = await rag_prompt.ainvoke({
-                    "question": question,
-                    "context": context,
-                    "history": history
-                })
-                result_msg = await self.llm.ainvoke(formatted_prompt)
-                return result_msg.content if self._is_valid_answer(result_msg.content) else None
+            # Логируем top-3 ответа для отладки
+            for i, (doc, score) in enumerate(filtered_results[:3], 1):
+                raw = doc.metadata.get("answer", "").strip()
+                logger.info(f"Топ-{i}: score={score:.2f} | answer='{raw}'")
 
-            # 3. Улучшение ответа через ИИ (встроено в основной поток)
-            if best_score > 0.75:  # Порог для улучшения
-                try:
-                    # Минимальное улучшение для точных ответов
-                    if best_score > 0.9:
-                        enhance_prompt = f"""
-                        Перефразируй ответ более естественно, сохраняя точность:
-                        Вопрос: {question}
-                        Текущий ответ: {raw_answer}
-                        Улучшенный вариант (максимум 1 предложение):
-                        """
-                    else:
-                        # Полное улучшение с контекстом
-                        enhance_prompt = f"""Твоя задача — развернуть ответ,если ответ ответ в два-три слова, используя контекст вопроса, но не добавляя новых фактов.Иначе оставь его каким он есть. 
+            # Попробуем найти наиболее часто встречающийся валидный ответ среди топ-3
+            top_answers = [
+                doc.metadata.get("answer", "").strip()
+                for doc, score in filtered_results[:3]
+                if self._is_valid_answer(doc.metadata.get("answer", "").strip())
+            ]
 
-                                                Правила:
-                                                1. Сохрани 100% оригинального смысла
-                                                2. Используй только информацию из предоставленного контекста
-                                                3. Добавляй не более 5-7 слов сверх исходного ответа
-                                                4. Следи за грамматической связностью
+            if top_answers:
+                counter = Counter(top_answers)
+                most_common_answer, count = counter.most_common(1)[0]
+                if count >= 2:
+                    logger.info("Ответ подтверждён несколькими источниками")
+                    self._update_history(user_id, question, most_common_answer)
+                    return most_common_answer
 
-                                                Формат:
-                                                Контекст: [релевантный фрагмент базы знаний]
-                                                Вопрос: [вопрос пользователя] 
-                                                Текущий ответ: [краткий ответ]
+            best_doc, best_score = filtered_results[0]
+            logger.info(f"Best match score: {best_score:.2f} for: '{question}'")
 
-                                                Пример:
-                                                Контекст: Для оплаты доступны карты Visa и Mastercard
-                                                Вопрос: Какие карты принимаются?
-                                                Текущий ответ: Visa и Mastercard
-                                                Развернутый: Да, мы принимаем Visa и Mastercard
+            raw_answer = best_doc.metadata.get("answer", "...").strip()
+            if best_score > 0.75 and self._is_valid_answer(raw_answer):
+                logger.info("Ответ напрямую из базы знаний")
+                self._update_history(user_id, question, raw_answer)
+                return raw_answer
 
-                                                Обработай:
-                                                Контекст: {best_doc.page_content[:200]}...
-                                                Вопрос: {question}
-                                                Текущий ответ: {raw_answer}
+            context = f"В: {best_doc.page_content}\nО: {raw_answer}"
+            history = await self._get_chat_history({"user_id": user_id})
 
-                                                Развернутый ответ: """
-                    
-                    enhanced_msg = await self.llm.ainvoke(enhance_prompt)
-                    final_answer = enhanced_msg.content if self._is_valid_answer(enhanced_msg.content) else raw_answer
-                except Exception as e:
-                    logger.warning(f"Answer enhancement failed, using original: {e}")
-                    final_answer = raw_answer
+            prompt_template = ChatPromptTemplate.from_template(self.get_current_prompt())
+            formatted_prompt = await prompt_template.ainvoke({
+                "question": question,
+                "context": context,
+                "history": history
+            })
+
+            result_msg = await self.llm.ainvoke(formatted_prompt)
+            result = result_msg.content
+
+            logger.info(f"Raw RAG result: {result}")
+
+            if self._is_valid_answer(result):
+                self._update_history(user_id, question, result)
+                return result
             else:
-                final_answer = raw_answer
-
-            # 4. Обновление истории и возврат
-            self._update_history(user_id, question, final_answer)
-            return final_answer
+                return None
 
         except Exception as e:
-            logger.error(f"Full RAG generation error: {e}")
+            logger.error(f"RAG chain error: {e}", exc_info=True)
             return None
 
 

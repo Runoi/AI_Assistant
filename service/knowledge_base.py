@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 from datetime import datetime
+import time
 from typing import List, Dict, Optional, Set, Tuple, Union
 from pathlib import Path
 
@@ -51,6 +52,9 @@ class KnowledgeBase:
         # Ленивая инициализация парсеров
         self._sheets_parser = None
         self._telegram_parser = None
+
+    
+    
 
     @property
     def sheets_parser(self):
@@ -417,6 +421,8 @@ class KnowledgeBase:
                 )
         except Exception as e:
             logger.error(f"Progress update failed: {e}")
+
+    
 
     async def close(self):
         """Корректное закрытие ресурсов"""

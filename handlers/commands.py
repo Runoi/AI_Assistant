@@ -48,7 +48,10 @@ def register_handlers(app: Client, config: Config):
             if regime not in ["all", "sheets", "telegram"]:
                 await message.reply("Недопустимый режим. Используйте: all, sheets, telegram")
                 return
-                
+
+            
+                       
+
             # Обновление базы знаний
             await kb.update_all_sources(
                 bot=client,
@@ -258,6 +261,8 @@ def register_handlers(app: Client, config: Config):
         except Exception as e:
             await message.reply(f"⚠️ Ошибка: {str(e)}")
 
+    
+
     @app.on_message(filters.command("set_prompt") & filters.user(config.ADMINS))
     async def set_prompt(client: Client, message: Message):
         """Устанавливает новый промпт"""
@@ -343,19 +348,42 @@ def register_handlers(app: Client, config: Config):
             logger.error(f"Ошибка отправки сообщения: {e}")
             return False
 
-    def _validate_message(text: Optional[str]) -> str:
-        """Проверка и очистка текста сообщения"""
+    def _validate_message(text: Optional[str]) -> Optional[str]:
+        """Проверка и очистка текста сообщения с полным игнорированием стоп-слов"""
         if not text:
-            return "Извините, не получилось сформировать ответ"
+            return None
             
         # Удаляем непечатаемые символы
         cleaned = "".join(c for c in str(text) if c.isprintable() or c in "\n\r\t")
         cleaned = cleaned.strip()
         
-        # Заменяем полностью пустые сообщения
         if not cleaned:
-            return "Ответ не содержит текста"
-            
+            return None
+        
+        # Список стоп-слов для полного игнорирования ответа
+        STOP_PHRASES = {
+            "извините",
+            "не знаю", 
+            "не могу",
+            "нет информации",
+            "не удалось",
+            "я не",
+            "мне неизвестно",
+            "не понимаю",
+            "не имею данных",
+            "не располагаю информацией"
+        }
+
+        # Проверка на стоп-фразы (без учета регистра)
+        lower_text = cleaned.lower()
+        for phrase in STOP_PHRASES:
+            if phrase in lower_text:
+                return None  # Полное игнорирование ответа
+        
+        # Дополнительная проверка "пустых" ответов
+        if len(cleaned.split()) < 3 and any(w in cleaned.lower() for w in ["нет", "не", "ничего"]):
+            return None
+
         # Обрезаем слишком длинные сообщения
         return cleaned[:4000]
 
