@@ -208,40 +208,51 @@ class TerraChatAI:
                 logger.warning(f"No results found for question: {question}")
                 return None
 
+            # Фильтруем только релевантные результаты (score > 0.5)
             filtered_results = [(doc, score) for doc, score in results if score > 0.5]
             if not filtered_results:
-                logger.warning(f"No relevant results (all scores <= 0.7) for: {question}")
+                logger.warning(f"No relevant results (all scores <= 0.5) for: {question}")
                 return None
 
             # Логируем top-3 ответа для отладки
             for i, (doc, score) in enumerate(filtered_results[:3], 1):
-                raw = doc.metadata.get("answer", "").strip()
-                logger.info(f"Топ-{i}: score={score:.2f} | answer='{raw}'")
+                raw_answer = doc.metadata.get("answer", "").strip()
+                logger.info(f"Топ-{i}: score={score:.2f} | answer='{raw_answer}'")
 
-            # Попробуем найти наиболее часто встречающийся валидный ответ среди топ-3
+            # 1. Приоритет: ответ с очень высокой релевантностью (score > 0.85)
+            best_doc, best_score = filtered_results[0]
+            if best_score > 0.85:
+                raw_answer = best_doc.metadata.get("answer", "").strip()
+                if self._is_valid_answer(raw_answer):
+                    logger.info(f"Выбран ответ с высоким score ({best_score:.2f})")
+                    self._update_history(user_id, question, raw_answer)
+                    return raw_answer
+
+            # 2. Проверка подтвержденных ответов (минимум 3 одинаковых среди топ-5)
             top_answers = [
                 doc.metadata.get("answer", "").strip()
-                for doc, score in filtered_results[:3]
+                for doc, score in filtered_results[:5]  # Проверяем больше результатов
                 if self._is_valid_answer(doc.metadata.get("answer", "").strip())
             ]
 
             if top_answers:
                 counter = Counter(top_answers)
                 most_common_answer, count = counter.most_common(1)[0]
-                if count >= 2:
-                    logger.info("Ответ подтверждён несколькими источниками")
+                
+                # Требуем строгого подтверждения (3+ одинаковых ответа)
+                if count >= 3:
+                    logger.info(f"Ответ подтверждён {count} источниками")
                     self._update_history(user_id, question, most_common_answer)
                     return most_common_answer
 
-            best_doc, best_score = filtered_results[0]
-            logger.info(f"Best match score: {best_score:.2f} for: '{question}'")
-
-            raw_answer = best_doc.metadata.get("answer", "...").strip()
-            if best_score > 0.75 and self._is_valid_answer(raw_answer):
-                logger.info("Ответ напрямую из базы знаний")
+            # 3. Если нет подтвержденных ответов, берем лучший по score (если он валидный)
+            raw_answer = best_doc.metadata.get("answer", "").strip()
+            if best_score > 0.7 and self._is_valid_answer(raw_answer):
+                logger.info(f"Использован лучший ответ (score={best_score:.2f})")
                 self._update_history(user_id, question, raw_answer)
                 return raw_answer
 
+            # 4. Если ничего не подошло, генерируем ответ через LLM
             context = f"В: {best_doc.page_content}\nО: {raw_answer}"
             history = await self._get_chat_history({"user_id": user_id})
 
@@ -255,13 +266,13 @@ class TerraChatAI:
             result_msg = await self.llm.ainvoke(formatted_prompt)
             result = result_msg.content
 
-            logger.info(f"Raw RAG result: {result}")
+            logger.info(f"Сгенерированный LLM ответ: {result}")
 
             if self._is_valid_answer(result):
                 self._update_history(user_id, question, result)
                 return result
-            else:
-                return None
+
+            return None
 
         except Exception as e:
             logger.error(f"RAG chain error: {e}", exc_info=True)
