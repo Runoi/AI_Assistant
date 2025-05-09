@@ -19,6 +19,8 @@ class Config(BaseSettings):
     MARKUP_MAX_TOKENS: int = 4096  # Лимит токенов для разметки
     BOT_ID: int = None
     OPENAI_PROXY: str = None  # Прокси для OpenAI, если требуется
+    ALLOWED_CHAT_IDS: List[int] = []       # ID разрешенных чатов
+    ALLOWED_CHAT_USERNAMES: List[str] = [] # @usernames разрешенных чатов
     
     class Config:
         env_file = ".env"

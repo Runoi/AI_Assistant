@@ -16,6 +16,12 @@ from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
 
+class ResponseMode:
+    TEST = "test"          # Только тестовый чат
+    WHITELIST = "whitelist" # Только чаты из белого списка
+    PRIVATE = "private"    # Только личные сообщения
+    ALL = "all"            # Все чаты (осторожно!)
+
 async def mark_as_read(client: Client, message: Message):
     """Пометить сообщение как прочитанное"""
     try:
@@ -26,6 +32,32 @@ async def mark_as_read(client: Client, message: Message):
 def register_handlers(app: Client, config: Config):
     chat_ai = TerraChatAI(config,client=app)
     kb = KnowledgeBase(config,app)
+
+    def should_respond(message: Message) -> bool:
+        """Определяет, должен ли бот отвечать на сообщение в зависимости от режима"""
+        load_dotenv('.env')
+        regime = os.getenv('REGIME', ResponseMode.TEST)
+        chat_id = message.chat.id
+        
+        if regime == ResponseMode.TEST:
+            return chat_id == -1001945870336  # Только тестовый чат
+            
+        elif regime == ResponseMode.WHITELIST:
+            # Проверка по ID чатов из конфига
+            if chat_id in config.ALLOWED_CHAT_IDS:
+                return True
+            # Проверка по username/ссылке если есть
+            if hasattr(message.chat, 'username') and message.chat.username:
+                return message.chat.username in config.ALLOWED_CHAT_USERNAMES
+            return False
+            
+        elif regime == ResponseMode.PRIVATE:
+            return message.chat.type == ChatType.PRIVATE
+            
+        elif regime == ResponseMode.ALL:
+            return True
+            
+        return False
 
     @app.on_message(filters.command("start"))
     async def start(client: Client, message: Message):
@@ -290,14 +322,21 @@ def register_handlers(app: Client, config: Config):
         try:
             load_dotenv('.env')
             regime = os.getenv('REGIME', 'test')
-            if regime == 'test':
-                if message.chat.id != -1001945870336:
-                    return
-
+            # if regime == 'test':
+            #     if message.chat.id != -1001945870336:
+            #         return
+            # Проверяем, должен ли бот отвечать в этом чате
+            if not should_respond(message):
+                return
 
             if not message.from_user or not message.text:
                 await _safe_reply(message, "Пожалуйста, отправьте текстовый вопрос")
                 return
+
+            if not message.from_user or not message.text:
+                await _safe_reply(message, "Пожалуйста, отправьте текстовый вопрос")
+                return
+            
             await mark_as_read(client, message)
             # 2. Подготовка вопроса
             user_id = message.from_user.id
