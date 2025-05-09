@@ -349,8 +349,9 @@ def register_handlers(app: Client, config: Config):
             logger.info(f"Обработка вопроса от {user_id}: {question[:100]}...")
 
             # 3. Отправка действия "печатает"
+            await asyncio.sleep(15)  # Задержка для имитации печати
             await client.send_chat_action(message.chat.id, enums.ChatAction.TYPING)
-            await asyncio.sleep(5)  # Задержка для имитации печати
+            
 
             # 4. Генерация ответа
             try:
