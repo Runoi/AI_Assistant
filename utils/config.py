@@ -21,6 +21,7 @@ class Config(BaseSettings):
     OPENAI_PROXY: str = None  # Прокси для OpenAI, если требуется
     ALLOWED_CHAT_IDS: List[int] = []       # ID разрешенных чатов
     ALLOWED_CHAT_USERNAMES: List[str] = [] # @usernames разрешенных чатов
+    ENABLE_LLM_FALLBACK:bool = True
     
     class Config:
         env_file = ".env"

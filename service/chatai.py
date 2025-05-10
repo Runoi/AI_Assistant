@@ -212,7 +212,32 @@ class TerraChatAI:
             filtered_results = [(doc, score) for doc, score in results if score > 0.5]
             if not filtered_results:
                 logger.warning(f"No relevant results (all scores <= 0.5) for: {question}")
+                
+                if self.config.ENABLE_LLM_FALLBACK:
+                    # Пробуем сгенерировать ответ на основе только промпта
+                    context = "Нет релевантной информации"
+                    history = await self._get_chat_history({"user_id": user_id})
+
+                    prompt_template = ChatPromptTemplate.from_template(self.get_current_prompt())
+                    formatted_prompt = await prompt_template.ainvoke({
+                        "question": question,
+                        "context": context,
+                        "history": history
+                    })
+
+                    result_msg = await self.llm.ainvoke(formatted_prompt)
+                    result = result_msg.content
+
+                    logger.info(f"Fallback LLM ответ: {result}")
+
+                    if self._is_valid_answer(result):
+                        self._update_history(user_id, question, result)
+                        return result
+                else:
+                    logger.info("LLM fallback отключён в конфиге")
+
                 return None
+
 
             # Логируем top-3 ответа для отладки
             for i, (doc, score) in enumerate(filtered_results[:3], 1):
