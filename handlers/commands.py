@@ -13,6 +13,7 @@ from service.knowledge_base import KnowledgeBase
 from utils.config import Config
 from pyrogram.enums import ChatType
 from langchain_core.documents import Document
+from langchain_community.vectorstores import Chroma
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +68,8 @@ def register_handlers(app: Client, config: Config):
     @app.on_message(filters.command("update") & filters.user(config.ADMINS))
     async def update(client: Client, message: Message):
         await mark_as_read(client, message)
-        kb = KnowledgeBase(config,client=client)
-        chat_ai = TerraChatAI(config, client=client)  # Добавляем инициализацию chat_ai
+        kb = KnowledgeBase(config, client=client)
+        chat_ai = TerraChatAI(config, client=client)
         
         try:
             parts = message.text.split(maxsplit=1)
@@ -81,10 +82,32 @@ def register_handlers(app: Client, config: Config):
                 await message.reply("Недопустимый режим. Используйте: all, sheets, telegram")
                 return
 
-            
-                       
+            # Полная очистка базы при режиме sheets или all
+            if regime in ["all", "sheets"]:
+                try:
+                    progress = await message.reply("🧹 Начинаю очистку базы...")
+                    
+                    # Даем время на освобождение ресурсов
+                    await asyncio.sleep(2)
+                    
+                    if await kb.clear_base():
+                        await progress.edit_text("✔ База успешно очищена\n🔄 Пересоздаю хранилище...")
+                        # Инициализируем заново
+                        kb.vectorstore = Chroma(
+                            persist_directory="chroma_data",
+                            embedding_function=kb.embeddings,
+                            
+                        )
+                        await progress.edit_text("✅ База полностью готова к обновлению")
+                    else:
+                        await progress.edit_text("⚠ Частичная очистка. Рекомендуется:\n1. Остановить бота\n2. Удалить папку chroma_data\n3. Перезапустить")
+                        return
+                except Exception as e:
+                    await message.reply(f"🚨 Критическая ошибка: {str(e)[:200]}")
+                    return
 
             # Обновление базы знаний
+            progress_msg = await message.reply("🔄 Начинаю обновление...")
             await kb.update_all_sources(
                 bot=client,
                 chat_id=message.chat.id,
@@ -92,28 +115,26 @@ def register_handlers(app: Client, config: Config):
                 regime=regime
             )
             
-            # Если режим all или sheets - обновляем промпт из таблицы
+            # Обновление промпта
             if regime in ["all", "sheets"]:
                 try:
-                    await message.reply("🔄 Проверяю обновления промпта в таблице...")
                     prompt = await kb.get_prompt_from_sheets()
-                    logger.info(prompt)
                     if prompt and prompt.strip():
                         if chat_ai.update_prompt(prompt.strip()):
-                            await message.reply("✅ Промпт успешно обновлен из таблицы!")
+                            await progress_msg.edit_text("✅ Обновление завершено\n• Промпт успешно обновлен")
                         else:
-                            await message.reply("⚠️ Промпт найден, но не удалось его обновить")
+                            await progress_msg.edit_text("✅ Обновление завершено\n⚠️ Промпт не обновлен")
                     else:
-                        await message.reply("ℹ️ В таблице не найден промпт для обновления")
+                        await progress_msg.edit_text("✅ Обновление завершено\nℹ️ Промпт не изменялся")
                 except Exception as e:
-                    await message.reply(f"⚠️ Ошибка при обновлении промпта: {str(e)[:200]}")
+                    await progress_msg.edit_text(f"✅ Обновление завершено\n⚠️ Ошибка промпта: {str(e)[:200]}")
                     
         except Exception as e:
-            await message.reply(f"⚠️ Ошибка: {str(e)[:400]}")
+            await message.reply(f"⚠️ Критическая ошибка: {str(e)[:400]}")
+            logger.error(f"Update error: {e}", exc_info=True)
         finally:
             await asyncio.sleep(3)
             await kb.close()
-
     @app.on_message(filters.command("export_kb") & filters.user(config.ADMINS))
     async def export_knowledge_base(client: Client, message: Message):
         """Экспортирует базу знаний в JSON файл и отправляет его администратору."""
