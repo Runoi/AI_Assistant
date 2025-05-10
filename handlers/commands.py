@@ -82,29 +82,29 @@ def register_handlers(app: Client, config: Config):
                 await message.reply("Недопустимый режим. Используйте: all, sheets, telegram")
                 return
 
-            # Полная очистка базы при режиме sheets или all
-            if regime in ["all", "sheets"]:
-                try:
-                    progress = await message.reply("🧹 Начинаю очистку базы...")
+            # # Полная очистка базы при режиме sheets или all
+            # if regime in ["all", "sheets"]:
+            #     try:
+            #         progress = await message.reply("🧹 Начинаю очистку базы...")
                     
-                    # Даем время на освобождение ресурсов
-                    await asyncio.sleep(2)
+            #         # Даем время на освобождение ресурсов
+            #         await asyncio.sleep(2)
                     
-                    if await kb.clear_base():
-                        await progress.edit_text("✔ База успешно очищена\n🔄 Пересоздаю хранилище...")
-                        # Инициализируем заново
-                        kb.vectorstore = Chroma(
-                            persist_directory="chroma_data",
-                            embedding_function=kb.embeddings,
+            #         if await kb.clear_base():
+            #             await progress.edit_text("✔ База успешно очищена\n🔄 Пересоздаю хранилище...")
+            #             # Инициализируем заново
+            #             kb.vectorstore = Chroma(
+            #                 persist_directory="chroma_data",
+            #                 embedding_function=kb.embeddings,
                             
-                        )
-                        await progress.edit_text("✅ База полностью готова к обновлению")
-                    else:
-                        await progress.edit_text("⚠ Частичная очистка. Рекомендуется:\n1. Остановить бота\n2. Удалить папку chroma_data\n3. Перезапустить")
-                        return
-                except Exception as e:
-                    await message.reply(f"🚨 Критическая ошибка: {str(e)[:200]}")
-                    return
+            #             )
+            #             await progress.edit_text("✅ База полностью готова к обновлению")
+            #         else:
+            #             await progress.edit_text("⚠ Частичная очистка. Рекомендуется:\n1. Остановить бота\n2. Удалить папку chroma_data\n3. Перезапустить")
+            #             return
+            #     except Exception as e:
+            #         await message.reply(f"🚨 Критическая ошибка: {str(e)[:200]}")
+            #         return
 
             # Обновление базы знаний
             progress_msg = await message.reply("🔄 Начинаю обновление...")

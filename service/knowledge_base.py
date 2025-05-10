@@ -140,66 +140,66 @@ class KnowledgeBase:
             return results
 
 
-    async def clear_base(self):
-        """Универсальный метод очистки базы для всех версий ChromaDB"""
-        try:
-            # Вариант 1: Попытка удаления через API
-            try:
-                collection = self.vectorstore._collection
-                if hasattr(collection, 'delete'):
-                    await collection.delete()
-                    logger.info("База очищена через delete()")
-                    return True
-            except Exception as api_error:
-                logger.warning(f"Delete API failed: {str(api_error)}")
+    # async def clear_base(self):
+    #     """Универсальный метод очистки базы для всех версий ChromaDB"""
+    #     try:
+    #         # Вариант 1: Попытка удаления через API
+    #         try:
+    #             collection = self.vectorstore._collection
+    #             if hasattr(collection, 'delete'):
+    #                 await collection.delete()
+    #                 logger.info("База очищена через delete()")
+    #                 return True
+    #         except Exception as api_error:
+    #             logger.warning(f"Delete API failed: {str(api_error)}")
 
-            # Вариант 2: Удаление всех документов
-            try:
-                ids = self.vectorstore.get()['ids']
-                if ids:
-                    await self.vectorstore.adelete(ids=ids)
-                    logger.info(f"Удалено {len(ids)} документов")
-                    return True
-            except Exception as delete_error:
-                logger.warning(f"Delete documents failed: {str(delete_error)}")
+    #         # Вариант 2: Удаление всех документов
+    #         try:
+    #             ids = self.vectorstore.get()['ids']
+    #             if ids:
+    #                 await self.vectorstore.adelete(ids=ids)
+    #                 logger.info(f"Удалено {len(ids)} документов")
+    #                 return True
+    #         except Exception as delete_error:
+    #             logger.warning(f"Delete documents failed: {str(delete_error)}")
 
-            # Вариант 3: Физическое удаление файлов (только если persist_directory доступен)
-            if hasattr(self.vectorstore, '_persist_directory'):
-                persist_dir = self.vectorstore._persist_directory
-                try:
-                    # Закрываем все соединения
-                    if hasattr(self.vectorstore, '_client'):
-                        try:
-                            if hasattr(self.vectorstore._client, 'close'):
-                                self.vectorstore._client.close()
-                            elif hasattr(self.vectorstore._client, '_http'):
-                                self.vectorstore._client._http.close()
-                        except Exception as close_error:
-                            logger.warning(f"Close client failed: {str(close_error)}")
+    #         # Вариант 3: Физическое удаление файлов (только если persist_directory доступен)
+    #         if hasattr(self.vectorstore, '_persist_directory'):
+    #             persist_dir = self.vectorstore._persist_directory
+    #             try:
+    #                 # Закрываем все соединения
+    #                 if hasattr(self.vectorstore, '_client'):
+    #                     try:
+    #                         if hasattr(self.vectorstore._client, 'close'):
+    #                             self.vectorstore._client.close()
+    #                         elif hasattr(self.vectorstore._client, '_http'):
+    #                             self.vectorstore._client._http.close()
+    #                     except Exception as close_error:
+    #                         logger.warning(f"Close client failed: {str(close_error)}")
 
-                    # Удаляем с повторными попытками
-                    for attempt in range(3):
-                        try:
-                            if os.path.exists(persist_dir):
-                                shutil.rmtree(persist_dir, ignore_errors=True)
-                                logger.info(f"Директория удалена: {persist_dir}")
-                                return True
-                            await asyncio.sleep(1)
-                        except Exception as file_error:
-                            logger.warning(f"Attempt {attempt + 1} failed: {str(file_error)}")
-                except Exception as dir_error:
-                    logger.error(f"Directory removal failed: {str(dir_error)}")
+    #                 # Удаляем с повторными попытками
+    #                 for attempt in range(3):
+    #                     try:
+    #                         if os.path.exists(persist_dir):
+    #                             shutil.rmtree(persist_dir, ignore_errors=True)
+    #                             logger.info(f"Директория удалена: {persist_dir}")
+    #                             return True
+    #                         await asyncio.sleep(1)
+    #                     except Exception as file_error:
+    #                         logger.warning(f"Attempt {attempt + 1} failed: {str(file_error)}")
+    #             except Exception as dir_error:
+    #                 logger.error(f"Directory removal failed: {str(dir_error)}")
 
-            # Если ничего не сработало - создаем новую коллекцию
-            self.vectorstore = Chroma(
-                embedding_function=self.embeddings,
-                collection_name="temp_collection_" + str(int(time.time())))
-            logger.warning("Создана новая коллекция")
-            return True
+    #         # Если ничего не сработало - создаем новую коллекцию
+    #         self.vectorstore = Chroma(
+    #             embedding_function=self.embeddings,
+    #             collection_name="temp_collection_" + str(int(time.time())))
+    #         logger.warning("Создана новая коллекция")
+    #         return True
 
-        except Exception as e:
-            logger.error(f"Ошибка очистки базы: {str(e)}", exc_info=True)
-            return False
+    #     except Exception as e:
+    #         logger.error(f"Ошибка очистки базы: {str(e)}", exc_info=True)
+    #         return False
 
     async def _update_from_sheets(self) -> int:
         try:
