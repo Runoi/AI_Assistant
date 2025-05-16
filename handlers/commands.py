@@ -40,6 +40,8 @@ def register_handlers(app: Client, config: Config):
         regime = os.getenv('REGIME', ResponseMode.TEST)
         chat_id = message.chat.id
         
+        
+        
         if regime == ResponseMode.TEST:
             return chat_id == -1001945870336  # Только тестовый чат
             
@@ -337,6 +339,7 @@ def register_handlers(app: Client, config: Config):
         & ~filters.command("update")
         & ~filters.command("get_prompt")
         & ~filters.command("set_prompt")
+        & ~filters.me
     )
     async def handle_question(client: Client, message: Message):
         """Обработчик вопросов с полной защитой от пустых сообщений"""

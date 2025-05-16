@@ -277,21 +277,23 @@ class TerraChatAI:
                 self._update_history(user_id, question, raw_answer)
                 return raw_answer
 
-            # 4. Если ничего не подошло, генерируем ответ через LLM
-            context = f"В: {best_doc.page_content}\nО: {raw_answer}"
-            history = await self._get_chat_history({"user_id": user_id})
 
-            prompt_template = ChatPromptTemplate.from_template(self.get_current_prompt())
-            formatted_prompt = await prompt_template.ainvoke({
-                "question": question,
-                "context": context,
-                "history": history
-            })
+            if self.config.ENABLE_LLM_FALLBACK:
+                # 4. Если ничего не подошло, генерируем ответ через LLM
+                context = f"В: {best_doc.page_content}\nО: {raw_answer}"
+                history = await self._get_chat_history({"user_id": user_id})
 
-            result_msg = await self.llm.ainvoke(formatted_prompt)
-            result = result_msg.content
+                prompt_template = ChatPromptTemplate.from_template(self.get_current_prompt())
+                formatted_prompt = await prompt_template.ainvoke({
+                    "question": question,
+                    "context": context,
+                    "history": history
+                })
 
-            logger.info(f"Сгенерированный LLM ответ: {result}")
+                result_msg = await self.llm.ainvoke(formatted_prompt)
+                result = result_msg.content
+
+                logger.info(f"Сгенерированный LLM ответ: {result}")
 
             if self._is_valid_answer(result):
                 self._update_history(user_id, question, result)
