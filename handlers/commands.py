@@ -372,8 +372,7 @@ def register_handlers(app: Client, config: Config):
 
             logger.info(f"Обработка вопроса от {user_id}: {question[:100]}...")
 
-            # 3. Отправка действия "печатает"
-            await asyncio.sleep(15)  # Задержка для имитации печати
+            
             
             
 
@@ -393,6 +392,8 @@ def register_handlers(app: Client, config: Config):
 
             # 5. Гарантированная отправка ответа
             if answer:
+                # 3. Отправка действия "печатает"
+                await asyncio.sleep(15)  # Задержка для имитации печати
                 await client.send_chat_action(message.chat.id, enums.ChatAction.TYPING) 
                 await _safe_reply(message, answer)
                 logger.info(f"Ответ пользователю {user_id} отправлен")
