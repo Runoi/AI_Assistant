@@ -294,7 +294,7 @@ class TerraChatAI:
                 result = result_msg.content
 
                 logger.info(f"Сгенерированный LLM ответ: {result}")
-
+            
             if self._is_valid_answer(result):
                 self._update_history(user_id, question, result)
                 return result

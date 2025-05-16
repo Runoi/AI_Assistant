@@ -374,7 +374,7 @@ def register_handlers(app: Client, config: Config):
 
             # 3. Отправка действия "печатает"
             await asyncio.sleep(15)  # Задержка для имитации печати
-            await client.send_chat_action(message.chat.id, enums.ChatAction.TYPING)
+            
             
 
             # 4. Генерация ответа
@@ -392,8 +392,12 @@ def register_handlers(app: Client, config: Config):
                 answer = "Произошла ошибка при обработке вопроса"
 
             # 5. Гарантированная отправка ответа
-            await _safe_reply(message, answer)
-            logger.info(f"Ответ пользователю {user_id} отправлен")
+            if answer:
+                await client.send_chat_action(message.chat.id, enums.ChatAction.TYPING) 
+                await _safe_reply(message, answer)
+                logger.info(f"Ответ пользователю {user_id} отправлен")
+            else:
+                logger.info(f"Ответ пользователю {user_id} неотправлен")
 
         except Exception as e:
             logger.error(f"Критическая ошибка: {e}", exc_info=True)
@@ -405,7 +409,7 @@ def register_handlers(app: Client, config: Config):
             text = _validate_message(text)
             if not text:
                 return False
-                
+               
             await message.reply(text)
             return True
         except Exception as e:
